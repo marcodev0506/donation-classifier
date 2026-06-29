@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import io
 import json
 import os
 import sqlite3
@@ -7,6 +8,7 @@ from datetime import datetime, timezone
 
 import httpx
 import requests
+from PIL import Image
 from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -26,60 +28,30 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llava"  # Manteniendo estrictamente tu modelo actual
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "donaciones.db")
 
-# Prompt optimizado para clasificación de donaciones en Venezuela
+# Prompt compacto para clasificación de donaciones (Venezuela)
 PROMPT = (
-    "Eres un sistema experto en clasificación de donaciones humanitarias para Venezuela. "
-    "Tu tarea es analizar el texto, marcas, etiquetas o descripción de un producto y clasificarlo "
-    "en una sola categoría con su respectiva información.\n\n"
-    "=== DICCIONARIO DE PALABRAS CLAVE (CONTEXTO: FARMATODO / LOCATEL / VENEZUELA) ===\n"
-    "- MEDICAMENTOS: Atamel, Tachipirin, Teragrip, Alival, Brugesic, Ibuprofeno, Acetaminofén, Paracetamol, "
-    "Diclofenac, Buscapina, Gastrial, Nourgasin, Loperamida, LiFull, Alikal, "
-    "Loratadina, Allegra, Sinutab, Amoxicilina, Ampollas, Jarabe, Gotas, Antialérgico, Antibiótico, "
-    "Analgésico, Vitamina C, Cevalin, Redoxon, Complejo B, Ácido fólico, Calcio, Pastillas, Cápsulas, "
-    "Blister, Gasas, Vendas, Adhesivo médico, Algodón, Alcohol medicinal, Agua oxigenada, Povidona, "
-    "Betadine, Curitas, Inyectadoras, Jeringas, Tapabocas, Mascarillas, Guantes quirúrgicos.\n"
-    "- HIGIENE: Every Night, Drene, Pantene, Head & Shoulders, Sedal, Shampoo, Champú, Acondicionador, "
-    "Baño de crema, Jabón Las Llaves (baño), Protex, Palmolive, Dove, Rexona, Speed Stick, Mum, Gillette, "
-    "Prestobarba, Crema dental, Colgate, Close-Up, Oral-B, Cepillo de dientes, Enjuague bucal, Listerine, "
-    "Saba, Nosotras, Toallas sanitarias, Protectores diarios, Tampones, Pampers, Huggies, Pañales (infantiles/adultos), "
-    "Toallitas húmedas, Desodorante, Papel higiénico, Cotones, Q-tips.\n"
-    "- LIMPIEZA: Cloro, Nevex, Detergente, Ace, Ariel, Las Llaves (lavar), Mistolín, Más, Desinfectante, "
-    "Lavaplatos, Axion, Limón, Suavizante, Downy, Azulillo, Jabón de panela, Limpiador de pocetas, Harpic, "
-    "Desengrasante, Esponja de brillo, Paño amarillo (para limpiar).\n\n"
-    "=== CATEGORÍAS DISPONIBLES ===\n"
-    "- 'medicamentos': Todo lo listado en su sección del diccionario, insumos médicos, tratamientos y botiquines.\n"
-    "- 'higiene': Todo lo relacionado al aseo y cuidado personal corporal e íntimo.\n"
-    "- 'limpieza': Productos químicos y utensilios destinados estrictamente al mantenimiento del hogar u oficina.\n"
-    "- 'ropa': Camisas, pantalones, shorts, interiores, panties, sostenes, medias, abrigos, suéteres, uniformes, "
-    "sábanas, cobijas, edredones, toallas de baño, paños de cuerpo, textiles en general.\n"
-    "- 'calzado': Zapatos, tenis, botas, sandalias, cholas, zapatillas, calzado deportivo.\n"
-    "- 'comida': Alimentos no perecederos, enlatados (atún, sardina), arroz, pasta, harina pan, granos, aceite, "
-    "azúcar, sal, leche en polvo, avena, toddy, jugos, gatorade, sueros orales (Pedialyte).\n"
-    "- 'otros': Herramientas, juguetes, electrónicos o artículos que no pertenezcan a ninguna categoría anterior.\n\n"
-    "=== RECONOCIMIENTO VISUAL DE TEXTILES (ROPA) ===\n"
-    "Si no hay texto legible pero ves una prenda, identifícala por su forma:\n"
-    "- CAMISA / FRANELA: Tiene mangas (cortas o largas) y forma de torso. La camisa suele tener botones y cuello; la franela es de tela suave sin botones.\n"
-    "- SUÉTER / ABRIGO: Textura gruesa (lana, algodón pesado), cuello redondo/alto o capucha, sin botones completos al frente.\n"
-    "- BLUE JEAN / PANTALÓN: Tela de mezclilla (denim) azul, gris o negro, con bolsillos y costuras visibles, forma de dos piernas.\n"
-    "- COBIJA / MANTA / SÁBANA: Tela grande, cuadrada o rectangular, extendida o doblada, sin mangas, sin botones ni forma de extremidades.\n"
-    "- MEDIAS / INTERIORES: Prendas pequeñas de tela suave.\n"
-    "Antes de decidir, describe mentalmente las características visuales (mangas, botones, denim, tela extendida) y luego clasifica.\n\n"
-    "=== REGLAS CRÍTICAS DE EXCLUSIÓN Y ENFOQUE ===\n"
-    "1. REGLA DE LA TOALLA/PAÑO: Una 'toalla de baño' o 'paño de cuerpo' es ROPA. Una 'toalla sanitaria' o 'toallita húmeda' es HIGIENE. Un 'paño amarillo' o 'paño de cocina' es LIMPIEZA.\n"
-    "2. REGLA DE LOS JABONES: Si dice 'jabón de baño', 'jabón líquido corporal' o marcas como Protex/Dove, es HIGIENE. Si dice 'jabón de panela', 'jabón de lavar' o marcas como Las Llaves/Ace, es LIMPIEZA.\n"
-    "3. REGLA DE LOS SUEROS: Los sueros medicinales endovenosos o de hidratación extrema (ej. Ringer, Fisiológico) son MEDICAMENTOS. Los sueros de tomar (Pedialyte, Gluco-Oral) o bebidas deportivas son COMIDA.\n"
-    "4. Si el empaque menciona marcas exclusivas de Farmatodo/Locatel de cuidado personal (ej. 'Formulaciones Farmatodo'), clasifícalo en HIGIENE, a menos que sea un fármaco activo, en cuyo caso es MEDICAMENTOS.\n\n"
-    "=== FORMATO DE SALIDA ===\n"
-    "Responde EXCLUSIVAMENTE con un objeto JSON plano, sin bloques de código (sin ```json ... ```), sin texto adicional.\n"
-    "Estructura exacta del JSON:\n"
+    "Clasifica la donación leyendo marcas/etiquetas o, si no hay texto, por su forma. "
+    "Elige UNA categoría:\n"
+    "- medicamentos: pastillas, jarabes, blisters, gasas, vendas, alcohol, agua oxigenada, jeringas. Marcas: Atamel, Ibuprofeno, Brugesic, Loratadina, Redoxon.\n"
+    "- higiene: aseo personal. Shampoo, crema dental, jabón de baño, desodorante, papel higiénico, toallas sanitarias, pañales. Marcas: Pantene, Colgate, Protex, Dove, Pampers, Saba.\n"
+    "- limpieza: aseo del hogar. Cloro, detergente, desinfectante, lavaplatos, suavizante, jabón de lavar/panela. Marcas: Nevex, Ariel, Ace, Mistolín, Axion, Las Llaves.\n"
+    "- comida: enlatados (atún, sardina), arroz, pasta, harina, granos, aceite, azúcar, leche, jugos, gatorade, Pedialyte.\n"
+    "- ropa: camisas, franelas, pantalones, blue jean, suéteres, medias, interiores, sábanas, cobijas, toallas de baño.\n"
+    "- calzado: zapatos, tenis, botas, sandalias, cholas, zapatillas.\n"
+    "- otros: lo que no encaje arriba.\n\n"
+    "Reconocer ropa por forma: camisa=mangas+botones+cuello; franela=mangas sin botones; blue jean=denim azul con bolsillos; cobija/sábana=tela grande extendida sin mangas.\n"
+    "Reglas: 'toalla de baño'=ropa, 'toalla sanitaria'=higiene, 'paño de cocina'=limpieza. "
+    "Jabón de baño (Protex/Dove)=higiene; jabón de lavar/panela (Las Llaves/Ace)=limpieza. "
+    "Suero de tomar (Pedialyte)=comida; suero endovenoso (Ringer)=medicamentos.\n\n"
+    "Responde SOLO con JSON plano, sin markdown:\n"
     "{\n"
-    '  "categoria": "medicamentos" | "ropa" | "calzado" | "comida" | "higiene" | "limpieza" | "otros",\n'
-    '  "subcategoria": "Nombre específico deducido (ej: acetaminofén, shampoo, franela, zapatos). Si no se lee, dejar cadena vacía \"\".",\n'
-    '  "descripcion_corta": "Breve descripción del objeto en español.",\n'
+    '  "categoria": "medicamentos|ropa|calzado|comida|higiene|limpieza|otros",\n'
+    '  "subcategoria": "nombre específico si se lee (ej: acetaminofén, shampoo, blue jean); si no, cadena vacía",\n'
+    '  "descripcion_corta": "breve descripción en español",\n'
     '  "conteo_estimado": 1,\n'
-    '  "prioridad": "Alta" | "Media" | "Baja"\n'
-    "}\n\n"
-    "Prioridades: comida/medicamentos/higiene/limpieza = Alta; ropa/calzado = Media; otros = Baja."
+    '  "prioridad": "Alta|Media|Baja"\n'
+    "}\n"
+    "Prioridad: comida/medicamentos/higiene/limpieza=Alta; ropa/calzado=Media; otros=Baja."
 )
 
 
@@ -242,6 +214,21 @@ def normalizar_clasificacion(resultado):
     return resultado
 
 
+def optimizar_imagen(contenido, lado_max=768, calidad=70):
+    """Redimensiona y comprime la imagen para acelerar la inferencia de visión."""
+    try:
+        img = Image.open(io.BytesIO(contenido))
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.thumbnail((lado_max, lado_max), Image.LANCZOS)
+        buffer = io.BytesIO()
+        img.save(buffer, format="JPEG", quality=calidad, optimize=True)
+        return buffer.getvalue()
+    except Exception as e:
+        print(f"[IMG] No se pudo optimizar la imagen: {e}. Se usa la original.")
+        return contenido
+
+
 @app.on_event("startup")
 def on_startup():
     init_db()
@@ -252,6 +239,10 @@ async def clasificar(request: Request, imagen: UploadFile = File(...)):
     contenido = await imagen.read()
     if await request.is_disconnected():
         return JSONResponse(status_code=499, content={"error": "Cliente desconectado antes de procesar."})
+
+    tam_original = len(contenido) // 1024
+    contenido = optimizar_imagen(contenido)
+    print(f"[IMG] Optimizada: {tam_original} KB -> {len(contenido) // 1024} KB")
 
     imagen_b64 = base64.b64encode(contenido).decode("utf-8")
 
@@ -265,14 +256,14 @@ async def clasificar(request: Request, imagen: UploadFile = File(...)):
         "options": {
             "temperature": 0.1,
             "top_p": 0.9,
-            "num_predict": 150,
+            "num_predict": 120,
         },
     }
 
     print(f"[OLLAMA] Enviando imagen a {OLLAMA_MODEL}... ({len(imagen_b64) // 1024} KB)")
 
     async def llamar_ollama():
-        async with httpx.AsyncClient(timeout=180.0) as client:
+        async with httpx.AsyncClient(timeout=240.0) as client:
             return await client.post(OLLAMA_URL, json=payload)
 
     tarea = asyncio.create_task(llamar_ollama())
@@ -297,7 +288,7 @@ async def clasificar(request: Request, imagen: UploadFile = File(...)):
     except httpx.TimeoutException:
         return JSONResponse(
             status_code=504,
-            content={"error": "Ollama no respondió en 180 segundos. El modelo puede estar cargando o la PC saturada."},
+            content={"error": "Ollama no respondió en 240 segundos. El modelo puede estar cargando o la PC saturada."},
         )
     except httpx.HTTPStatusError as e:
         return JSONResponse(
