@@ -43,14 +43,13 @@ PROMPT = (
     "Reglas: 'toalla de baño'=ropa, 'toalla sanitaria'=higiene, 'paño de cocina'=limpieza. "
     "Jabón de baño (Protex/Dove)=higiene; jabón de lavar/panela (Las Llaves/Ace)=limpieza. "
     "Suero de tomar (Pedialyte)=comida; suero endovenoso (Ringer)=medicamentos.\n\n"
-    "Responde SOLO con JSON plano, sin markdown:\n"
-    "{\n"
-    '  "categoria": "medicamentos|ropa|calzado|comida|higiene|limpieza|otros",\n'
-    '  "subcategoria": "nombre específico si se lee (ej: acetaminofén, shampoo, blue jean); si no, cadena vacía",\n'
-    '  "descripcion_corta": "breve descripción en español",\n'
-    '  "conteo_estimado": 1,\n'
-    '  "prioridad": "Alta|Media|Baja"\n'
-    "}\n"
+    "Responde SOLO con un JSON plano, sin markdown. "
+    "El campo 'categoria' debe ser UNA sola palabra de esta lista exacta: medicamentos, higiene, limpieza, comida, ropa, calzado, otros. "
+    "El campo 'prioridad' debe ser una sola palabra: Alta, Media o Baja. "
+    "NO copies las opciones; elige solo el valor que corresponde.\n"
+    "Ejemplo de respuesta válida (para una cobija):\n"
+    '{"categoria": "ropa", "subcategoria": "cobija", "descripcion_corta": "Cobija de tela doblada", "conteo_estimado": 1, "prioridad": "Media"}\n'
+    "Ahora responde con el JSON real del objeto de la imagen.\n"
     "Prioridad: comida/medicamentos/higiene/limpieza=Alta; ropa/calzado=Media; otros=Baja."
 )
 
@@ -343,6 +342,18 @@ async def clasificar(request: Request, imagen: UploadFile = File(...)):
     for campo, valor_default in defaults_campos.items():
         if campo not in resultado:
             resultado[campo] = valor_default
+
+    categorias_validas = {"medicamentos", "higiene", "limpieza", "comida", "ropa", "calzado", "otros"}
+    if str(resultado.get("categoria", "")).strip().lower() not in categorias_validas:
+        resultado["categoria"] = "otros"
+    else:
+        resultado["categoria"] = str(resultado["categoria"]).strip().lower()
+
+    prioridades_validas = {"Alta", "Media", "Baja"}
+    if str(resultado.get("prioridad", "")).strip().capitalize() not in prioridades_validas:
+        resultado["prioridad"] = "Baja"
+    else:
+        resultado["prioridad"] = str(resultado["prioridad"]).strip().capitalize()
 
     resultado = normalizar_clasificacion(resultado)
 
