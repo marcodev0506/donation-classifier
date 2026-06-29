@@ -15,7 +15,7 @@ import {
   View,
 } from "react-native";
 
-import { CLASIFICAR_URL, DONACIONES_URL, RESUMEN_URL, SUBCATEGORIAS_URL } from "./config";
+import { CLASIFICAR_URL, DONACIONES_URL, RESUMEN_URL, SUBCATEGORIAS_URL, CENTROS_URL } from "./config";
 
 const { width } = Dimensions.get("window");
 
@@ -41,17 +41,6 @@ const PRIORITY_COLORS = {
   Media: "#F4A261",
   Baja: "#2DC653",
 };
-
-const CENTROS_ACOPIO = [
-  "Centro principal",
-  "Centro Norte",
-  "Centro Sur",
-  "Centro Este",
-  "Centro Oeste",
-  "Iglesia San José",
-  "Escuela Bolívar",
-  "Comedor comunitario",
-];
 
 const CATEGORIAS_EDITABLES = [
   { key: "comida", label: "Comida", icon: "🥫" },
@@ -172,13 +161,13 @@ function SubcategoriaSelect({ categoria, subcategoria, onChange, onAdmin }) {
   );
 }
 
-function CentroSelect({ centro, onChange }) {
+function CentroSelect({ centros, centro, onChange, onAdmin }) {
   const [abierto, setAbierto] = useState(false);
 
   return (
     <>
       <TouchableOpacity style={styles.selectBoton} onPress={() => setAbierto(true)}>
-        <Text style={styles.selectTexto}>{centro}</Text>
+        <Text style={styles.selectTexto} numberOfLines={1}>{centro || "Seleccionar centro..."}</Text>
         <Text style={styles.selectFlecha}>▾</Text>
       </TouchableOpacity>
 
@@ -187,22 +176,29 @@ function CentroSelect({ centro, onChange }) {
           <Pressable style={styles.selectTarjeta} onPress={() => {}}>
             <Text style={styles.selectTitulo}>Centro de acopio</Text>
             <ScrollView showsVerticalScrollIndicator={false}>
-              {CENTROS_ACOPIO.map((c) => {
-                const activa = centro === c;
-                return (
-                  <TouchableOpacity
-                    key={c}
-                    style={[styles.selectItem, activa && { backgroundColor: "#6C63FF18" }]}
-                    onPress={() => {
-                      onChange(c);
-                      setAbierto(false);
-                    }}
-                  >
-                    <Text style={[styles.selectItemTexto, activa && { color: "#6C63FF", fontWeight: "800" }]}>{c}</Text>
-                    {activa && <Text style={[styles.selectCheck, { color: "#6C63FF" }]}>✓</Text>}
-                  </TouchableOpacity>
-                );
-              })}
+              {centros.length === 0 ? (
+                <Text style={styles.textoVacio}>No hay centros activos.</Text>
+              ) : (
+                centros.map((c) => {
+                  const activa = centro === c.nombre;
+                  return (
+                    <TouchableOpacity
+                      key={c.id}
+                      style={[styles.selectItem, activa && { backgroundColor: "#6C63FF18" }]}
+                      onPress={() => {
+                        onChange(c.nombre);
+                        setAbierto(false);
+                      }}
+                    >
+                      <Text style={[styles.selectItemTexto, activa && { color: "#6C63FF", fontWeight: "800" }]}>{c.nombre}</Text>
+                      {activa && <Text style={[styles.selectCheck, { color: "#6C63FF" }]}>✓</Text>}
+                    </TouchableOpacity>
+                  );
+                })
+              )}
+              <TouchableOpacity style={[styles.selectItem, { borderTopWidth: 1, borderTopColor: "#E0E0E0", marginTop: 4 }]} onPress={() => { setAbierto(false); onAdmin(); }}>
+                <Text style={[styles.selectItemTexto, { color: "#118AB2" }]}>⚙️ Administrar centros</Text>
+              </TouchableOpacity>
             </ScrollView>
           </Pressable>
         </Pressable>
@@ -273,7 +269,10 @@ export default function App() {
   const [textoEditadoSub, setTextoEditadoSub] = useState("");
   const [donaciones, setDonaciones] = useState([]);
   const [resumen, setResumen] = useState(null);
-  const [centroAcopio, setCentroAcopio] = useState(CENTROS_ACOPIO[0]);
+  const [centros, setCentros] = useState([]);
+  const [centroAcopio, setCentroAcopio] = useState(null);
+  const [centrosVisible, setCentrosVisible] = useState(false);
+  const [nuevoCentro, setNuevoCentro] = useState("");
   const pulseAnim = useRef(new Animated.Value(1)).current;
 
   const iniciarPulso = () => {
@@ -324,7 +323,7 @@ export default function App() {
         throw new Error(datos.error || `Error del servidor: ${respuesta.status}`);
       }
 
-      setResultado(datos);
+      setResultado({ ...datos, subcategoria: "" });
       setModalVisible(true);
     } catch (err) {
       setError(err.message || "Error desconocido al clasificar la imagen.");
@@ -362,6 +361,18 @@ export default function App() {
       setGuardando(true);
       setMensajeGuardado(null);
 
+      if (resultado.subcategoria) {
+        try {
+          await fetch(SUBCATEGORIAS_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ categoria: resultado.categoria, nombre: resultado.subcategoria }),
+          });
+        } catch (err) {
+          // Si ya existe, ignorar error
+        }
+      }
+
       const respuesta = await fetch(DONACIONES_URL, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -394,11 +405,37 @@ export default function App() {
     }
   };
 
+  const cargarCentros = async () => {
+    try {
+      const respuesta = await fetch(`${CENTROS_URL}?activo=true`);
+      const datos = await respuesta.json();
+      if (respuesta.ok) {
+        setCentros(datos);
+        if (datos.length > 0 && !centroAcopio) {
+          setCentroAcopio(datos[0].nombre);
+        }
+      }
+    } catch (err) {
+      console.warn("Error cargando centros:", err.message);
+    }
+  };
+
+  useEffect(() => {
+    cargarCentros();
+  }, []);
+
+  useEffect(() => {
+    if (centroAcopio) {
+      actualizarInventarioSilencioso();
+    }
+  }, [centroAcopio]);
+
   const actualizarInventarioSilencioso = async () => {
     try {
+      const centro = centroAcopio ? encodeURIComponent(centroAcopio) : "";
       const [respuestaDonaciones, respuestaResumen] = await Promise.all([
-        fetch(DONACIONES_URL),
-        fetch(RESUMEN_URL),
+        fetch(`${DONACIONES_URL}?centro_acopio=${centro}`),
+        fetch(`${RESUMEN_URL}?centro_acopio=${centro}`),
       ]);
 
       const datosDonaciones = await respuestaDonaciones.json();
@@ -433,6 +470,67 @@ export default function App() {
   const abrirAdmin = async () => {
     await cargarSubcategorias();
     setAdminVisible(true);
+  };
+
+  const abrirCentros = async () => {
+    await cargarCentrosTodos();
+    setCentrosVisible(true);
+  };
+
+  const cargarCentrosTodos = async () => {
+    try {
+      const respuesta = await fetch(CENTROS_URL);
+      const datos = await respuesta.json();
+      if (respuesta.ok) setCentros(datos);
+    } catch (err) {
+      console.warn("Error cargando centros:", err.message);
+    }
+  };
+
+  const agregarCentro = async () => {
+    if (!nuevoCentro.trim()) return;
+    try {
+      const respuesta = await fetch(CENTROS_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ nombre: nuevoCentro.trim() }),
+      });
+      if (respuesta.ok) {
+        setNuevoCentro("");
+        await cargarCentrosTodos();
+        await cargarCentros();
+      }
+    } catch (err) {
+      console.warn("Error agregando centro:", err.message);
+    }
+  };
+
+  const toggleCentro = async (id, activo) => {
+    try {
+      const respuesta = await fetch(`${CENTROS_URL}/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activo }),
+      });
+      if (respuesta.ok) {
+        await cargarCentrosTodos();
+        await cargarCentros();
+      }
+    } catch (err) {
+      console.warn("Error actualizando centro:", err.message);
+    }
+  };
+
+  const eliminarCentro = async (id) => {
+    try {
+      const respuesta = await fetch(`${CENTROS_URL}/${id}`, { method: "DELETE" });
+      if (respuesta.ok) {
+        await cargarCentrosTodos();
+        await cargarCentros();
+      }
+    } catch (err) {
+      console.warn("Error eliminando centro:", err.message);
+    }
   };
 
   const agregarSubcategoria = async () => {
@@ -521,7 +619,7 @@ export default function App() {
         <View style={styles.encabezado}>
           <Text style={styles.titulo}>🤝 Clasificador de Donaciones</Text>
           <Text style={styles.subtitulo}>Centro de acopio activo</Text>
-          <CentroSelect centro={centroAcopio} onChange={setCentroAcopio} />
+          <CentroSelect centros={centros} centro={centroAcopio} onChange={setCentroAcopio} onAdmin={abrirCentros} />
           <View style={styles.botonesHeader}>
             <TouchableOpacity style={styles.botonHeader} onPress={cargarInventario}>
               <Text style={styles.textoBotonHeader}>📊 Inventario</Text>
@@ -759,6 +857,56 @@ export default function App() {
                           </TouchableOpacity>
                         </View>
                       )}
+                    </View>
+                  ))
+                )}
+              </ScrollView>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
+      <Modal visible={centrosVisible} transparent animationType="slide" onRequestClose={() => setCentrosVisible(false)}>
+        <Pressable style={styles.fondoModal} onPress={() => setCentrosVisible(false)}>
+          <Pressable style={styles.tarjetaContenedor} onPress={() => {}}>
+            <View style={styles.tarjetaInventario}>
+              <View style={styles.encabezadoInventario}>
+                <Text style={styles.tituloInventario}>🏢 Centros de acopio</Text>
+                <TouchableOpacity onPress={() => setCentrosVisible(false)}>
+                  <Text style={styles.cerrarInventario}>✕</Text>
+                </TouchableOpacity>
+              </View>
+
+              <View style={styles.filaHorizontal}>
+                <TextInput
+                  style={[styles.inputEditable, { flex: 1 }]}
+                  value={nuevoCentro}
+                  onChangeText={setNuevoCentro}
+                  placeholder="Nuevo centro de acopio"
+                  maxLength={60}
+                />
+                <TouchableOpacity style={styles.botonAgregarSub} onPress={agregarCentro}>
+                  <Text style={styles.textoBotonAgregarSub}>+</Text>
+                </TouchableOpacity>
+              </View>
+
+              <ScrollView showsVerticalScrollIndicator={false} style={{ marginTop: 12 }}>
+                {centros.length === 0 ? (
+                  <Text style={styles.textoVacio}>No hay centros registrados.</Text>
+                ) : (
+                  centros.map((item) => (
+                    <View key={item.id} style={styles.itemSubcategoria}>
+                      <View style={styles.filaHorizontal}>
+                        <Text style={[styles.textoSubcategoria, item.activo === 0 && { textDecorationLine: "line-through", color: "#9E9E9E" }]}>
+                          {item.nombre} {item.activo === 0 ? "(inactivo)" : ""}
+                        </Text>
+                        <TouchableOpacity onPress={() => toggleCentro(item.id, item.activo === 0)}>
+                          <Text style={styles.iconoAdmin}>{item.activo === 0 ? "✅" : "🚫"}</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity onPress={() => eliminarCentro(item.id)}>
+                          <Text style={styles.iconoAdmin}>🗑️</Text>
+                        </TouchableOpacity>
+                      </View>
                     </View>
                   ))
                 )}

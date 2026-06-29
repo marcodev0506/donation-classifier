@@ -1,6 +1,6 @@
-# 🤝 Clasificador de Donaciones — Sistema Open-Source
+# Clasificador de Donaciones
 
-Sistema completo para la clasificación automatizada de donaciones humanitarias mediante escaneo de fotos, usando visión por computadora con modelos de IA local (Ollama + llava) e inventario compartido en SQLite.
+Sistema para clasificar donaciones humanitarias mediante fotos. Usa visión por computadora con modelos locales de IA (Ollama + llava) y mantiene el inventario en SQLite.
 
 ## Arquitectura
 
@@ -9,9 +9,9 @@ donation-classifier/
 ├── backend/          # API REST en Python (FastAPI)
 │   ├── main.py
 │   └── requirements.txt
-├── frontend/         # App móvil React Native (Expo Go)
+├── frontend/         # App móvil en React Native con Expo
 │   ├── App.js
-│   ├── config.js     ← Configura tu IP aquí
+│   ├── config.js     # Configura la IP del servidor
 │   ├── app.json
 │   ├── babel.config.js
 │   └── package.json
@@ -20,24 +20,28 @@ donation-classifier/
 
 ## Categorías soportadas
 
-| Icono | Categoría     | Prioridad sugerida |
-|-------|---------------|--------------------|
-| 👕    | Ropa          | Media              |
-| 💧    | Agua          | Alta               |
-| 💊    | Medicamentos  | Alta               |
-| 🥫    | Alimentos     | Alta               |
-| 🧼    | Higiene       | Alta               |
-| 📦    | Otros         | Baja               |
+| Categoría     | Prioridad |
+|---------------|-----------|
+| Ropa          | Media     |
+| Agua          | Alta      |
+| Medicamentos  | Alta      |
+| Alimentos     | Alta      |
+| Higiene       | Alta      |
+| Limpieza      | Alta      |
+| Calzado       | Media     |
+| Otros         | Baja      |
 
-### Ejemplos considerados
+### Ejemplos por categoría
 
-| Categoría | Ejemplos |
-|-----------|----------|
-| Agua | Agua potable, botellones, garrafones |
-| Alimentos | Sardinas, atún, arroz, pasta, harina, granos, enlatados, leche, jugos, gatorade |
-| Higiene | Crema dental, Colgate, cepillos dentales, jabón, shampoo, papel higiénico, toallas sanitarias, pañales, desodorante, detergente |
+| Categoría    | Ejemplos |
+|--------------|----------|
+| Agua         | Botellones, garrafones, agua embotellada |
+| Alimentos    | Sardinas, atún, arroz, pasta, harina, granos, enlatados, leche, jugos, bebidas hidratantes |
+| Higiene      | Crema dental, cepillos dentales, jabón, shampoo, papel higiénico, toallas sanitarias, pañales, desodorante |
+| Limpieza     | Cloro, detergente, desinfectante, lavaplatos, suavizante, limpiador de piso |
 | Medicamentos | Pastillas, jarabes, vendas, gasas, botiquines, alcohol medicinal, agua oxigenada |
-| Ropa | Camisas, pantalones, zapatos, cholas, sandalias, cobijas, sábanas, toallas |
+| Ropa         | Camisas, pantalones, cobijas, sábanas, toallas |
+| Calzado      | Zapatos, tenis, botas, sandalias, cholas, zapatillas |
 
 ---
 
@@ -90,31 +94,26 @@ Puedes verificarlo abriendo `http://localhost:8000` en tu navegador o con:
 curl http://localhost:8000
 ```
 
-### Endpoint
+### Endpoints
 
-| Método | Ruta         | Descripción                                      |
-|--------|--------------|--------------------------------------------------|
-| POST   | `/clasificar`| Recibe una imagen y devuelve la clasificación IA |
-| POST   | `/donaciones`| Guarda una donación confirmada en SQLite |
-| GET    | `/donaciones`| Lista todas las donaciones guardadas |
-| GET    | `/donaciones/resumen`| Devuelve totales por categoría |
-| PATCH  | `/donaciones/{id}`| Actualiza una donación |
-| DELETE | `/donaciones/{id}`| Elimina una donación |
+| Método | Ruta                    | Descripción                                    |
+|--------|-------------------------|------------------------------------------------|
+| POST   | `/clasificar`           | Clasifica una imagen con el modelo de IA       |
+| POST   | `/donaciones`           | Guarda una donación confirmada                 |
+| GET    | `/donaciones`           | Lista donaciones, filtradas por centro         |
+| GET    | `/donaciones/resumen`   | Resumen de totales por categoría               |
+| PATCH  | `/donaciones/{id}`      | Actualiza una donación                         |
+| DELETE | `/donaciones/{id}`      | Elimina una donación                           |
+| GET    | `/subcategorias`        | Lista subcategorías por categoría              |
+| POST   | `/subcategorias`        | Agrega una subcategoría                        |
+| GET    | `/centros`              | Lista centros de acopio                        |
+| POST   | `/centros`              | Crea un centro de acopio                       |
+| PATCH  | `/centros/{id}`         | Activa o desactiva un centro                   |
+| DELETE | `/centros/{id}`         | Elimina un centro de acopio                    |
 
 **Ejemplo con curl:**
 ```bash
-curl -X POST http://localhost:8000/clasificar \
-  -F "imagen=@/ruta/a/foto.jpg"
-```
-
-**Respuesta esperada:**
-```json
-{
-  "categoria": "Alimentos",
-  "descripcion_corta": "Cajas de conservas de atún apiladas",
-  "conteo_estimado": 12,
-  "prioridad": "Alta"
-}
+curl -X POST http://localhost:8000/clasificar -F "imagen=@/ruta/a/foto.jpg"
 ```
 
 ---
@@ -129,13 +128,15 @@ export const API_BASE_URL = "http://192.168.1.100:8000";
 export const CLASIFICAR_URL = `${API_BASE_URL}/clasificar`;
 export const DONACIONES_URL = `${API_BASE_URL}/donaciones`;
 export const RESUMEN_URL = `${API_BASE_URL}/donaciones/resumen`;
+export const SUBCATEGORIAS_URL = `${API_BASE_URL}/subcategorias`;
+export const CENTROS_URL = `${API_BASE_URL}/centros`;
 ```
 
-**Cómo encontrar tu IP local:**
-- **Windows:** Abre PowerShell y ejecuta `ipconfig` → busca "Dirección IPv4"
-- **macOS/Linux:** Ejecuta `ifconfig` o `ip addr` en la terminal
+**Cómo encontrar la IP local:**
+- **Windows:** PowerShell → `ipconfig` → buscar "Dirección IPv4"
+- **macOS/Linux:** Terminal → `ifconfig` o `ip addr`
 
-> ⚠️ La app y el servidor deben estar en la **misma red Wi-Fi local**.
+La app y el servidor deben estar en la misma red local.
 
 ---
 
@@ -165,17 +166,17 @@ Se mostrará un código QR en la terminal. Escanéalo con:
 
 ---
 
-## Flujo completo de uso
+## Flujo de uso
 
-1. 🖥️ Inicia Ollama: `ollama serve`
-2. 🐍 Inicia el backend: `uvicorn main:app --host 0.0.0.0 --port 8000`
-3. 📱 Inicia Expo: `npx expo start` (desde `/frontend`)
-4. Escanea el QR con Expo Go en tu teléfono
-5. Apunta la cámara al artículo de donación y presiona el botón blanco
-6. Espera el análisis del modelo local
-7. Visualiza la tarjeta con los resultados de clasificación
-8. Presiona **Guardar donación** para registrar el resultado en SQLite
-9. Presiona **Ver inventario** para consultar el resumen compartido
+1. Iniciar Ollama: `ollama serve`
+2. Iniciar el backend: `uvicorn main:app --host 0.0.0.0 --port 8000`
+3. Iniciar Expo: `npx expo start` (desde `/frontend`)
+4. Escanear el QR con Expo Go en el dispositivo móvil
+5. Seleccionar el centro de acopio activo
+6. Capturar el artículo con la cámara
+7. Revisar y, si es necesario, corregir la categoría, descripción, cantidad y subcategoría
+8. Guardar la donación en SQLite
+9. Abrir el inventario para ver el resumen del centro seleccionado
 
 ---
 
@@ -187,7 +188,8 @@ Se mostrará un código QR en la terminal. Escanéalo con:
 | fastapi           | 0.111.0  | Framework API REST           |
 | uvicorn           | 0.30.1   | Servidor ASGI                |
 | requests          | 2.32.3   | Llamadas HTTP a Ollama       |
-| python-multipart  | 0.0.9    | Parsing de archivos (UploadFile) |
+| httpx             | 0.27.0   | Llamadas HTTP asíncronas     |
+| python-multipart  | 0.0.9    | Parsing de archivos          |
 
 ### Frontend
 | Paquete       | Versión  | Uso                         |

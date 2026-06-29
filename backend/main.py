@@ -1,11 +1,13 @@
+import asyncio
 import base64
 import json
 import os
 import sqlite3
 from datetime import datetime, timezone
 
+import httpx
 import requests
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, File, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
@@ -41,7 +43,7 @@ PROMPT = (
     "Estructura exacta del JSON:\n"
     "{\n"
     '  "categoria": "medicamentos" | "ropa" | "calzado" | "comida" | "higiene" | "limpieza" | "otros",\n'
-    '  "subcategoria": "nombre específico del producto, por ejemplo: shampoo, pañales, atún, cloro, acetaminofén",\n'
+    '  "subcategoria": "nombre específico del producto SI lo puedes leer claramente en la etiqueta (shampoo, pañales, atún, cloro); de lo contrario deja una cadena vacía '',\n'
     '  "descripcion_corta": "breve descripción del objeto en español, mencionando texto visible si lo puedes leer",\n'
     '  "conteo_estimado": 1,\n'
     '  "prioridad": "Alta" | "Media" | "Baja"\n'
@@ -113,12 +115,38 @@ def init_db():
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS centros_acopio (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL UNIQUE,
+            activo INTEGER NOT NULL DEFAULT 1
+        )
+        """
+    )
+    # Sembrar centros iniciales si la tabla está vacía
+    centros_existentes = conn.execute("SELECT COUNT(*) as total FROM centros_acopio").fetchone()["total"]
+    if centros_existentes == 0:
+        centros_iniciales = [
+            "Centro principal",
+            "Centro Norte",
+            "Centro Sur",
+            "Centro Este",
+            "Centro Oeste",
+            "Iglesia San José",
+            "Escuela Bolívar",
+            "Comedor comunitario",
+        ]
+        conn.executemany(
+            "INSERT INTO centros_acopio (nombre) VALUES (?)",
+            [(c,) for c in centros_iniciales],
+        )
     conn.commit()
     conn.close()
 
 
 def normalizar_subcategoria(categoria, nombre):
-    """Devuelve el nombre canónico de una subcategoria, creándola si no existe."""
+    """Devuelve el nombre canónico de una subcategoria si existe en el catálogo."""
     if not nombre or not str(nombre).strip():
         return ""
     nombre_limpio = str(nombre).strip().lower()
@@ -127,17 +155,8 @@ def normalizar_subcategoria(categoria, nombre):
         "SELECT nombre FROM subcategorias WHERE categoria = ? AND lower(nombre) = ?",
         (categoria, nombre_limpio),
     ).fetchone()
-    if row:
-        canonical = row["nombre"]
-    else:
-        cursor = conn.execute(
-            "INSERT INTO subcategorias (categoria, nombre) VALUES (?, ?)",
-            (categoria, str(nombre).strip()),
-        )
-        conn.commit()
-        canonical = str(nombre).strip()
     conn.close()
-    return canonical
+    return row["nombre"] if row else ""
 
 
 def row_to_dict(row):
@@ -198,8 +217,11 @@ def on_startup():
 
 
 @app.post("/clasificar")
-async def clasificar(imagen: UploadFile = File(...)):
+async def clasificar(request: Request, imagen: UploadFile = File(...)):
     contenido = await imagen.read()
+    if await request.is_disconnected():
+        return JSONResponse(status_code=499, content={"error": "Cliente desconectado antes de procesar."})
+
     imagen_b64 = base64.b64encode(contenido).decode("utf-8")
 
     payload = {
@@ -216,20 +238,36 @@ async def clasificar(imagen: UploadFile = File(...)):
     }
 
     print(f"[OLLAMA] Enviando imagen a {OLLAMA_MODEL}... ({len(imagen_b64) // 1024} KB)")
+
+    async def llamar_ollama():
+        async with httpx.AsyncClient(timeout=180.0) as client:
+            return await client.post(OLLAMA_URL, json=payload)
+
+    tarea = asyncio.create_task(llamar_ollama())
+    while not tarea.done():
+        if await request.is_disconnected():
+            tarea.cancel()
+            try:
+                await tarea
+            except asyncio.CancelledError:
+                pass
+            print("[OLLAMA] Petición cancelada: cliente desconectado.")
+            return JSONResponse(status_code=499, content={"error": "Cliente desconectado. Petición cancelada."})
+        await asyncio.sleep(0.5)
+
     try:
-        respuesta = requests.post(OLLAMA_URL, json=payload, timeout=180)
-        respuesta.raise_for_status()
-    except requests.exceptions.ConnectionError:
+        respuesta = await tarea
+    except httpx.ConnectError:
         return JSONResponse(
             status_code=503,
             content={"error": "No se puede conectar con Ollama. Verifica que 'ollama serve' esté corriendo."},
         )
-    except requests.exceptions.Timeout:
+    except httpx.TimeoutException:
         return JSONResponse(
             status_code=504,
             content={"error": "Ollama no respondió en 180 segundos. El modelo puede estar cargando o la PC saturada."},
         )
-    except requests.exceptions.HTTPError as e:
+    except httpx.HTTPStatusError as e:
         return JSONResponse(
             status_code=502,
             content={"error": "Error HTTP en Ollama.", "detalle": str(e)},
@@ -308,25 +346,47 @@ async def crear_donacion(donacion: DonacionCreate):
 
 
 @app.get("/donaciones")
-async def listar_donaciones():
+async def listar_donaciones(centro_acopio: str | None = None):
     conn = get_db_connection()
-    rows = conn.execute("SELECT * FROM donaciones ORDER BY id DESC").fetchall()
+    if centro_acopio:
+        rows = conn.execute(
+            "SELECT * FROM donaciones WHERE centro_acopio = ? ORDER BY id DESC",
+            (centro_acopio,),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM donaciones ORDER BY id DESC").fetchall()
     conn.close()
     return [row_to_dict(row) for row in rows]
 
 
 @app.get("/donaciones/resumen")
-async def resumen_donaciones():
+async def resumen_donaciones(centro_acopio: str | None = None):
     conn = get_db_connection()
-    rows = conn.execute(
-        """
-        SELECT categoria, SUM(conteo_estimado) AS total, COUNT(*) AS registros
-        FROM donaciones
-        GROUP BY categoria
-        ORDER BY categoria
-        """
-    ).fetchall()
-    prioridad_alta = conn.execute("SELECT COUNT(*) AS total FROM donaciones WHERE prioridad = 'Alta'").fetchone()
+    if centro_acopio:
+        rows = conn.execute(
+            """
+            SELECT categoria, SUM(conteo_estimado) AS total, COUNT(*) AS registros
+            FROM donaciones
+            WHERE centro_acopio = ?
+            GROUP BY categoria
+            ORDER BY categoria
+            """,
+            (centro_acopio,),
+        ).fetchall()
+        prioridad_alta = conn.execute(
+            "SELECT COUNT(*) AS total FROM donaciones WHERE prioridad = 'Alta' AND centro_acopio = ?",
+            (centro_acopio,),
+        ).fetchone()
+    else:
+        rows = conn.execute(
+            """
+            SELECT categoria, SUM(conteo_estimado) AS total, COUNT(*) AS registros
+            FROM donaciones
+            GROUP BY categoria
+            ORDER BY categoria
+            """
+        ).fetchall()
+        prioridad_alta = conn.execute("SELECT COUNT(*) AS total FROM donaciones WHERE prioridad = 'Alta'").fetchone()
     conn.close()
     return {
         "totales_por_categoria": [dict(row) for row in rows],
@@ -459,10 +519,76 @@ async def eliminar_subcategoria(subcategoria_id: int):
     return {"ok": True}
 
 
+class CentroCreate(BaseModel):
+    nombre: str
+
+
+class CentroUpdate(BaseModel):
+    activo: bool
+
+
+@app.get("/centros")
+async def listar_centros(activo: bool | None = None):
+    conn = get_db_connection()
+    if activo is not None:
+        rows = conn.execute(
+            "SELECT * FROM centros_acopio WHERE activo = ? ORDER BY nombre",
+            (int(activo),),
+        ).fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM centros_acopio ORDER BY nombre").fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+@app.post("/centros")
+async def crear_centro(centro: CentroCreate):
+    conn = get_db_connection()
+    try:
+        cursor = conn.execute(
+            "INSERT INTO centros_acopio (nombre) VALUES (?)",
+            (centro.nombre.strip(),),
+        )
+        conn.commit()
+        row = conn.execute("SELECT * FROM centros_acopio WHERE id = ?", (cursor.lastrowid,)).fetchone()
+    except sqlite3.IntegrityError:
+        conn.close()
+        return JSONResponse(status_code=409, content={"error": "Ya existe un centro de acopio con ese nombre."})
+    conn.close()
+    return dict(row)
+
+
+@app.patch("/centros/{centro_id}")
+async def actualizar_centro(centro_id: int, cambios: CentroUpdate):
+    conn = get_db_connection()
+    conn.execute(
+        "UPDATE centros_acopio SET activo = ? WHERE id = ?",
+        (int(cambios.activo), centro_id),
+    )
+    conn.commit()
+    row = conn.execute("SELECT * FROM centros_acopio WHERE id = ?", (centro_id,)).fetchone()
+    conn.close()
+    if row is None:
+        return JSONResponse(status_code=404, content={"error": "Centro de acopio no encontrado."})
+    return dict(row)
+
+
+@app.delete("/centros/{centro_id}")
+async def eliminar_centro(centro_id: int):
+    conn = get_db_connection()
+    cursor = conn.execute("DELETE FROM centros_acopio WHERE id = ?", (centro_id,))
+    conn.commit()
+    conn.close()
+    if cursor.rowcount == 0:
+        return JSONResponse(status_code=404, content={"error": "Centro de acopio no encontrado."})
+    return {"ok": True}
+
+
 @app.get("/")
 async def root():
     return {
         "mensaje": "API de Clasificación de Donaciones activa con Llava.",
         "clasificacion": "POST /clasificar",
         "subcategorias": "GET/POST/PUT/DELETE /subcategorias",
+        "centros": "GET/POST/PATCH/DELETE /centros",
     }

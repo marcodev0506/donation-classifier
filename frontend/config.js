@@ -8,3 +8,4 @@ export const CLASIFICAR_URL = `${API_BASE_URL}/clasificar`;
 export const DONACIONES_URL = `${API_BASE_URL}/donaciones`;
 export const RESUMEN_URL = `${API_BASE_URL}/donaciones/resumen`;
 export const SUBCATEGORIAS_URL = `${API_BASE_URL}/subcategorias`;
+export const CENTROS_URL = `${API_BASE_URL}/centros`;
