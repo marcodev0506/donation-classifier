@@ -26,28 +26,51 @@ OLLAMA_URL = "http://localhost:11434/api/generate"
 OLLAMA_MODEL = "llava"  # Manteniendo estrictamente tu modelo actual
 DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "donaciones.db")
 
-# Prompt optimizado para incluir la categoría de higiene
+# Prompt optimizado para clasificación de donaciones en Venezuela
 PROMPT = (
-    "Eres un clasificador de donaciones humanitarias. Antes de clasificar, intenta leer cualquier texto, marca o etiqueta visible en el producto. "
-    "Si la etiqueta dice shampoo, champú, Colgate, crema dental, jabón, cloro, detergente, desinfectante u otra palabra útil, usa ese texto para decidir.\n\n"
-    "Clasifica el objeto en una sola de estas categorías:\n"
-    "- 'medicamentos': Pastillas, cápsulas, jarabes, cajas de medicina, gasas, vendas, alcohol medicinal, agua oxigenada, botiquines, insumos médicos.\n"
-    "- 'ropa': Camisas, pantalones, abrigos, suéteres, medias, ropa interior, sábanas, cobijas, paños, toallas, textiles.\n"
-    "- 'calzado': Zapatos, tenis, botas, sandalias, cholas, zapatillas.\n"
-    "- 'comida': Sardina, atún, enlatados, arroz, pasta, harina, granos, aceite, sal, azúcar, leche, jugos, gatorade, sueros bebibles, alimentos empacados.\n"
-    "- 'higiene': Shampoo, champú, crema dental, Colgate, cepillo de dientes, jabón de baño, desodorante, papel higiénico, toallas sanitarias, pañales, productos de aseo personal.\n"
-    "- 'limpieza': Cloro, detergente, lavaplatos, desinfectante, suavizante, jabón de lavar, limpiador de piso, productos de limpieza del hogar.\n"
-    "- 'otros': Herramientas, juguetes, electrónicos u objetos que no entren claramente en lo anterior.\n\n"
-    "Reglas importantes: cholas, sandalias, zapatos y calzado nunca son higiene. Si ves una botella o empaque pero la etiqueta dice shampoo/champú, clasifica como higiene; si dice cloro/detergente/desinfectante, clasifica como limpieza; si dice medicamento o farmacia, clasifica como medicamentos.\n"
-    "Responde EXCLUSIVAMENTE con un objeto JSON plano, sin bloques de código, sin texto adicional.\n"
+    "Eres un sistema experto en clasificación de donaciones humanitarias para Venezuela. "
+    "Tu tarea es analizar el texto, marcas, etiquetas o descripción de un producto y clasificarlo "
+    "en una sola categoría con su respectiva información.\n\n"
+    "=== DICCIONARIO DE PALABRAS CLAVE (CONTEXTO: FARMATODO / LOCATEL / VENEZUELA) ===\n"
+    "- MEDICAMENTOS: Atamel, Tachipirin, Teragrip, Alival, Brugesic, Ibuprofeno, Acetaminofén, Paracetamol, "
+    "Diclofenac, Buscapina, Gastrial, Nourgasin, Loperamida, LiFull, Alikal, "
+    "Loratadina, Allegra, Sinutab, Amoxicilina, Ampollas, Jarabe, Gotas, Antialérgico, Antibiótico, "
+    "Analgésico, Vitamina C, Cevalin, Redoxon, Complejo B, Ácido fólico, Calcio, Pastillas, Cápsulas, "
+    "Blister, Gasas, Vendas, Adhesivo médico, Algodón, Alcohol medicinal, Agua oxigenada, Povidona, "
+    "Betadine, Curitas, Inyectadoras, Jeringas, Tapabocas, Mascarillas, Guantes quirúrgicos.\n"
+    "- HIGIENE: Every Night, Drene, Pantene, Head & Shoulders, Sedal, Shampoo, Champú, Acondicionador, "
+    "Baño de crema, Jabón Las Llaves (baño), Protex, Palmolive, Dove, Rexona, Speed Stick, Mum, Gillette, "
+    "Prestobarba, Crema dental, Colgate, Close-Up, Oral-B, Cepillo de dientes, Enjuague bucal, Listerine, "
+    "Saba, Nosotras, Toallas sanitarias, Protectores diarios, Tampones, Pampers, Huggies, Pañales (infantiles/adultos), "
+    "Toallitas húmedas, Desodorante, Papel higiénico, Cotones, Q-tips.\n"
+    "- LIMPIEZA: Cloro, Nevex, Detergente, Ace, Ariel, Las Llaves (lavar), Mistolín, Más, Desinfectante, "
+    "Lavaplatos, Axion, Limón, Suavizante, Downy, Azulillo, Jabón de panela, Limpiador de pocetas, Harpic, "
+    "Desengrasante, Esponja de brillo, Paño amarillo (para limpiar).\n\n"
+    "=== CATEGORÍAS DISPONIBLES ===\n"
+    "- 'medicamentos': Todo lo listado en su sección del diccionario, insumos médicos, tratamientos y botiquines.\n"
+    "- 'higiene': Todo lo relacionado al aseo y cuidado personal corporal e íntimo.\n"
+    "- 'limpieza': Productos químicos y utensilios destinados estrictamente al mantenimiento del hogar u oficina.\n"
+    "- 'ropa': Camisas, pantalones, shorts, interiores, panties, sostenes, medias, abrigos, suéteres, uniformes, "
+    "sábanas, cobijas, edredones, toallas de baño, paños de cuerpo, textiles en general.\n"
+    "- 'calzado': Zapatos, tenis, botas, sandalias, cholas, zapatillas, calzado deportivo.\n"
+    "- 'comida': Alimentos no perecederos, enlatados (atún, sardina), arroz, pasta, harina pan, granos, aceite, "
+    "azúcar, sal, leche en polvo, avena, toddy, jugos, gatorade, sueros orales (Pedialyte).\n"
+    "- 'otros': Herramientas, juguetes, electrónicos o artículos que no pertenezcan a ninguna categoría anterior.\n\n"
+    "=== REGLAS CRÍTICAS DE EXCLUSIÓN Y ENFOQUE ===\n"
+    "1. REGLA DE LA TOALLA/PAÑO: Una 'toalla de baño' o 'paño de cuerpo' es ROPA. Una 'toalla sanitaria' o 'toallita húmeda' es HIGIENE. Un 'paño amarillo' o 'paño de cocina' es LIMPIEZA.\n"
+    "2. REGLA DE LOS JABONES: Si dice 'jabón de baño', 'jabón líquido corporal' o marcas como Protex/Dove, es HIGIENE. Si dice 'jabón de panela', 'jabón de lavar' o marcas como Las Llaves/Ace, es LIMPIEZA.\n"
+    "3. REGLA DE LOS SUEROS: Los sueros medicinales endovenosos o de hidratación extrema (ej. Ringer, Fisiológico) son MEDICAMENTOS. Los sueros de tomar (Pedialyte, Gluco-Oral) o bebidas deportivas son COMIDA.\n"
+    "4. Si el empaque menciona marcas exclusivas de Farmatodo/Locatel de cuidado personal (ej. 'Formulaciones Farmatodo'), clasifícalo en HIGIENE, a menos que sea un fármaco activo, en cuyo caso es MEDICAMENTOS.\n\n"
+    "=== FORMATO DE SALIDA ===\n"
+    "Responde EXCLUSIVAMENTE con un objeto JSON plano, sin bloques de código (sin ```json ... ```), sin texto adicional.\n"
     "Estructura exacta del JSON:\n"
     "{\n"
     '  "categoria": "medicamentos" | "ropa" | "calzado" | "comida" | "higiene" | "limpieza" | "otros",\n'
-    '  "subcategoria": "nombre específico del producto SI lo puedes leer claramente en la etiqueta (shampoo, pañales, atún, cloro); de lo contrario deja una cadena vacía '',\n'
-    '  "descripcion_corta": "breve descripción del objeto en español, mencionando texto visible si lo puedes leer",\n'
+    '  "subcategoria": "Nombre específico deducido (ej: acetaminofén, shampoo, franela, zapatos). Si no se lee, dejar cadena vacía \"\".",\n'
+    '  "descripcion_corta": "Breve descripción del objeto en español.",\n'
     '  "conteo_estimado": 1,\n'
     '  "prioridad": "Alta" | "Media" | "Baja"\n'
-    "}\n"
+    "}\n\n"
     "Prioridades: comida/medicamentos/higiene/limpieza = Alta; ropa/calzado = Media; otros = Baja."
 )
 
