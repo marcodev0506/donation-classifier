@@ -319,16 +319,30 @@ async def clasificar(request: Request, imagen: UploadFile = File(...)):
                 content={"error": "La respuesta no contiene estructura JSON.", "cruda": texto_respuesta},
             )
 
-    for campo in ["categoria", "subcategoria", "descripcion_corta", "conteo_estimado", "prioridad"]:
+    # Llava a veces devuelve claves con acento o variantes; las normalizamos
+    alias_campos = {
+        "descripción_corta": "descripcion_corta",
+        "descripcion": "descripcion_corta",
+        "descripción": "descripcion_corta",
+        "categoría": "categoria",
+        "subcategoría": "subcategoria",
+        "conteo": "conteo_estimado",
+        "prioridad_estimada": "prioridad",
+    }
+    for variante, canonico in alias_campos.items():
+        if variante in resultado and canonico not in resultado:
+            resultado[canonico] = resultado.pop(variante)
+
+    defaults_campos = {
+        "categoria": "otros",
+        "subcategoria": "",
+        "descripcion_corta": "",
+        "conteo_estimado": 1,
+        "prioridad": "Baja",
+    }
+    for campo, valor_default in defaults_campos.items():
         if campo not in resultado:
-            if campo == "categoria":
-                resultado[campo] = "otros"
-            elif campo == "conteo_estimado":
-                resultado[campo] = 1
-            elif campo == "subcategoria":
-                resultado[campo] = ""
-            else:
-                resultado[campo] = "Baja"
+            resultado[campo] = valor_default
 
     resultado = normalizar_clasificacion(resultado)
 
