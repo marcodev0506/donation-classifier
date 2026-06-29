@@ -56,6 +56,14 @@ PROMPT = (
     "- 'comida': Alimentos no perecederos, enlatados (atún, sardina), arroz, pasta, harina pan, granos, aceite, "
     "azúcar, sal, leche en polvo, avena, toddy, jugos, gatorade, sueros orales (Pedialyte).\n"
     "- 'otros': Herramientas, juguetes, electrónicos o artículos que no pertenezcan a ninguna categoría anterior.\n\n"
+    "=== RECONOCIMIENTO VISUAL DE TEXTILES (ROPA) ===\n"
+    "Si no hay texto legible pero ves una prenda, identifícala por su forma:\n"
+    "- CAMISA / FRANELA: Tiene mangas (cortas o largas) y forma de torso. La camisa suele tener botones y cuello; la franela es de tela suave sin botones.\n"
+    "- SUÉTER / ABRIGO: Textura gruesa (lana, algodón pesado), cuello redondo/alto o capucha, sin botones completos al frente.\n"
+    "- BLUE JEAN / PANTALÓN: Tela de mezclilla (denim) azul, gris o negro, con bolsillos y costuras visibles, forma de dos piernas.\n"
+    "- COBIJA / MANTA / SÁBANA: Tela grande, cuadrada o rectangular, extendida o doblada, sin mangas, sin botones ni forma de extremidades.\n"
+    "- MEDIAS / INTERIORES: Prendas pequeñas de tela suave.\n"
+    "Antes de decidir, describe mentalmente las características visuales (mangas, botones, denim, tela extendida) y luego clasifica.\n\n"
     "=== REGLAS CRÍTICAS DE EXCLUSIÓN Y ENFOQUE ===\n"
     "1. REGLA DE LA TOALLA/PAÑO: Una 'toalla de baño' o 'paño de cuerpo' es ROPA. Una 'toalla sanitaria' o 'toallita húmeda' es HIGIENE. Un 'paño amarillo' o 'paño de cocina' es LIMPIEZA.\n"
     "2. REGLA DE LOS JABONES: Si dice 'jabón de baño', 'jabón líquido corporal' o marcas como Protex/Dove, es HIGIENE. Si dice 'jabón de panela', 'jabón de lavar' o marcas como Las Llaves/Ace, es LIMPIEZA.\n"
@@ -255,8 +263,9 @@ async def clasificar(request: Request, imagen: UploadFile = File(...)):
         "stream": False,
         "keep_alive": "5m",
         "options": {
-            "temperature": 0.2,
-            "num_predict": 120,
+            "temperature": 0.1,
+            "top_p": 0.9,
+            "num_predict": 150,
         },
     }
 
